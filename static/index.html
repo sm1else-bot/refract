@@ -1,0 +1,987 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>REFRACT // Multi-Agent Code Intelligence</title>
+<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=JetBrains+Mono:ital,wght@0,300;0,400;0,500;0,700;1,400&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.44.0/min/vs/loader.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/marked@9.1.6/marked.min.js"></script>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg:        #07090f;
+    --bg2:       #0c1018;
+    --bg3:       #111722;
+    --border:    #1c2535;
+    --border2:   #253044;
+    --text:      #c4d0e3;
+    --muted:     #4a6280;
+    --dim:       #2a3a50;
+
+    --cyan:      #00e5ff;
+    --violet:    #a78bfa;
+    --orange:    #fb923c;
+    --green:     #4ade80;
+    --pink:      #f472b6;
+
+    --agent-orchestrator: var(--violet);
+    --agent-syntax:       var(--cyan);
+    --agent-performance:  var(--orange);
+    --agent-test:         var(--green);
+    --agent-docstring:    var(--pink);
+  }
+
+  html, body { height: 100%; background: var(--bg); color: var(--text); font-family: 'JetBrains Mono', monospace; overflow: hidden; }
+
+  /* ── SCANLINE OVERLAY ─────────────────────────────────────────── */
+  body::before {
+    content: '';
+    position: fixed; inset: 0; z-index: 999; pointer-events: none;
+    background: repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(0,0,0,.04) 2px, rgba(0,0,0,.04) 4px);
+  }
+
+  /* ── GRID BACKGROUND ──────────────────────────────────────────── */
+  body::after {
+    content: '';
+    position: fixed; inset: 0; z-index: 0; pointer-events: none;
+    background-image:
+      linear-gradient(rgba(0,229,255,.03) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(0,229,255,.03) 1px, transparent 1px);
+    background-size: 40px 40px;
+  }
+
+  /* ── TOPBAR ────────────────────────────────────────────────────── */
+  #topbar {
+    position: relative; z-index: 10;
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 0 24px;
+    height: 52px;
+    border-bottom: 1px solid var(--border);
+    background: linear-gradient(180deg, #0a0e17 0%, var(--bg) 100%);
+  }
+
+  .logo {
+    font-family: 'Orbitron', monospace;
+    font-size: 16px; font-weight: 900; letter-spacing: .12em;
+    color: var(--cyan);
+    text-shadow: 0 0 20px rgba(0,229,255,.5);
+  }
+  .logo span { color: var(--muted); font-weight: 400; }
+
+  #status-bar { display: flex; align-items: center; gap: 20px; font-size: 11px; color: var(--muted); }
+  #provider-badge {
+    padding: 3px 10px;
+    border: 1px solid var(--border2);
+    border-radius: 2px;
+    color: var(--cyan);
+    font-size: 10px; letter-spacing: .08em;
+  }
+  #global-status { display: flex; align-items: center; gap: 6px; }
+  .status-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--muted); }
+  .status-dot.idle    { background: var(--muted); }
+  .status-dot.running { background: var(--cyan); box-shadow: 0 0 8px var(--cyan); animation: pulse 1s infinite; }
+  .status-dot.done    { background: var(--green); box-shadow: 0 0 8px var(--green); }
+  .status-dot.error   { background: #f87171; box-shadow: 0 0 8px #f87171; }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.3} }
+
+  /* ── MAIN LAYOUT ───────────────────────────────────────────────── */
+  #main {
+    position: relative; z-index: 1;
+    display: grid;
+    grid-template-columns: 44% 1fr;
+    height: calc(100vh - 52px);
+    overflow: hidden;
+  }
+
+  /* ── LEFT PANEL ────────────────────────────────────────────────── */
+  #left {
+    display: flex; flex-direction: column;
+    border-right: 1px solid var(--border);
+    overflow: hidden;
+  }
+
+  .panel-header {
+    padding: 10px 16px;
+    border-bottom: 1px solid var(--border);
+    font-size: 10px; letter-spacing: .12em; color: var(--muted);
+    background: var(--bg2);
+    display: flex; align-items: center; justify-content: space-between;
+  }
+  .panel-header .title { color: var(--text); letter-spacing: .08em; }
+
+  #editor-wrap { flex: 1; overflow: hidden; }
+
+  #controls {
+    padding: 12px 16px;
+    border-top: 1px solid var(--border);
+    background: var(--bg2);
+    display: flex; align-items: center; gap: 12px;
+  }
+
+  select {
+    background: var(--bg3); border: 1px solid var(--border2);
+    color: var(--text); font-family: 'JetBrains Mono', monospace;
+    font-size: 12px; padding: 7px 12px; border-radius: 3px; cursor: pointer;
+    outline: none;
+  }
+  select:focus { border-color: var(--cyan); }
+
+  #run-btn {
+    flex: 1;
+    background: transparent;
+    border: 1px solid var(--cyan);
+    color: var(--cyan);
+    font-family: 'Orbitron', monospace;
+    font-size: 11px; font-weight: 700; letter-spacing: .12em;
+    padding: 9px 20px; border-radius: 3px; cursor: pointer;
+    transition: all .2s;
+    position: relative; overflow: hidden;
+  }
+  #run-btn::before {
+    content: '';
+    position: absolute; inset: 0;
+    background: var(--cyan);
+    transform: translateX(-100%);
+    transition: transform .2s;
+    opacity: .1;
+  }
+  #run-btn:hover::before { transform: translateX(0); }
+  #run-btn:hover { box-shadow: 0 0 20px rgba(0,229,255,.3); }
+  #run-btn:disabled { border-color: var(--dim); color: var(--dim); cursor: not-allowed; box-shadow: none; }
+  #run-btn:disabled::before { display: none; }
+
+  #clear-btn {
+    background: transparent; border: 1px solid var(--border2);
+    color: var(--muted); font-family: 'JetBrains Mono', monospace;
+    font-size: 11px; padding: 9px 14px; border-radius: 3px; cursor: pointer;
+    transition: all .2s;
+  }
+  #clear-btn:hover { border-color: var(--border); color: var(--text); }
+
+  /* ── RIGHT PANEL ───────────────────────────────────────────────── */
+  #right {
+    display: flex; flex-direction: column;
+    overflow: hidden;
+  }
+
+  #pipeline {
+    flex: 1;
+    overflow-y: auto;
+    padding: 14px 16px;
+    display: flex; flex-direction: column; gap: 10px;
+    scrollbar-width: thin; scrollbar-color: var(--border2) transparent;
+  }
+  #pipeline::-webkit-scrollbar { width: 4px; }
+  #pipeline::-webkit-scrollbar-track { background: transparent; }
+  #pipeline::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 4px; }
+
+  /* ── AGENT CARD ────────────────────────────────────────────────── */
+  .agent-card {
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    background: var(--bg2);
+    overflow: hidden;
+    flex-shrink: 0;
+    transition: border-color .3s, box-shadow .3s;
+  }
+  .agent-card.processing {
+    border-color: var(--agent-color, var(--cyan));
+    box-shadow: 0 0 16px -4px var(--agent-color, var(--cyan));
+    animation: cardPulse 2s infinite;
+  }
+  .agent-card.complete {
+    border-color: color-mix(in srgb, var(--agent-color, var(--cyan)) 40%, var(--border));
+  }
+  @keyframes cardPulse { 0%,100%{box-shadow:0 0 16px -4px var(--agent-color,.3)} 50%{box-shadow:0 0 24px -2px var(--agent-color,.6)} }
+
+  .agent-header {
+    display: flex; align-items: center; gap: 10px;
+    padding: 10px 14px;
+    cursor: pointer;
+    user-select: none;
+    border-bottom: 1px solid transparent;
+    transition: border-color .3s;
+  }
+  .agent-card.processing .agent-header,
+  .agent-card.complete   .agent-header { border-bottom-color: var(--border); }
+
+  .agent-indicator {
+    width: 8px; height: 8px; border-radius: 50%;
+    background: var(--dim);
+    flex-shrink: 0;
+    transition: background .3s, box-shadow .3s;
+  }
+  .processing .agent-indicator {
+    background: var(--agent-color, var(--cyan));
+    box-shadow: 0 0 8px var(--agent-color, var(--cyan));
+    animation: pulse 1s infinite;
+  }
+  .complete .agent-indicator {
+    background: var(--agent-color, var(--cyan));
+    box-shadow: 0 0 6px var(--agent-color, var(--cyan));
+  }
+
+  .agent-name {
+    font-size: 11px; letter-spacing: .1em; font-weight: 500;
+    color: var(--muted);
+    transition: color .3s;
+    flex: 1;
+  }
+  .processing .agent-name, .complete .agent-name { color: var(--text); }
+
+  .agent-badge {
+    font-size: 9px; letter-spacing: .1em; padding: 2px 8px;
+    border-radius: 2px; border: 1px solid;
+    opacity: 0; transition: opacity .3s;
+  }
+  .idle     .agent-badge { display: none; }
+  .processing .agent-badge { opacity: 1; color: var(--agent-color, var(--cyan)); border-color: var(--agent-color, var(--cyan)); }
+  .complete   .agent-badge { opacity: 1; color: var(--agent-color, var(--cyan)); border-color: color-mix(in srgb, var(--agent-color, var(--cyan)) 50%, transparent); }
+
+  .agent-toggle { font-size: 10px; color: var(--dim); transition: color .3s, transform .3s; }
+  .agent-card.open .agent-toggle { transform: rotate(180deg); color: var(--muted); }
+
+  .agent-output {
+    max-height: 0; overflow: hidden;
+    transition: max-height .6s cubic-bezier(.4,0,.2,1);
+  }
+  .agent-card.open .agent-output { max-height: 9999px; overflow: visible; }
+
+  .agent-output-inner {
+    padding: 14px;
+    font-size: 12px; line-height: 1.7;
+    color: var(--text);
+  }
+
+  /* markdown rendering */
+  .agent-output-inner p   { margin-bottom: .6em; }
+  .agent-output-inner ul  { margin: .4em 0 .6em 1.2em; }
+  .agent-output-inner li  { margin-bottom: .2em; }
+  .agent-output-inner h1, .agent-output-inner h2, .agent-output-inner h3 {
+    font-size: 12px; color: var(--cyan); margin: .8em 0 .4em;
+    letter-spacing: .06em;
+  }
+  .agent-output-inner code {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    background: var(--bg3);
+    padding: 1px 5px; border-radius: 2px;
+    color: var(--cyan);
+  }
+  .agent-output-inner pre {
+    background: var(--bg); border: 1px solid var(--border2);
+    border-radius: 4px; padding: 12px; margin: .6em 0;
+    overflow-x: auto;
+  }
+  .agent-output-inner pre code {
+    background: none; padding: 0; color: var(--text); font-size: 11.5px;
+  }
+  .agent-output-inner strong { color: var(--text); }
+
+  /* ── TEST RESULTS ─────────────────────────────────────────────── */
+  /* ── TEST TOOLBAR ──────────────────────────────────────────────── */
+  #test-toolbar {
+    border-top: 1px solid var(--border);
+    background: var(--bg2);
+    padding: 10px 16px;
+    display: flex; flex-direction: column; gap: 8px;
+  }
+  #test-toolbar-actions { display: flex; gap: 8px; }
+  .test-action-btn {
+    background: transparent;
+    border: 1px solid var(--border2);
+    color: var(--muted);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px; letter-spacing: .08em;
+    padding: 5px 12px; border-radius: 3px; cursor: pointer;
+    transition: all .2s;
+  }
+  .test-action-btn:hover { border-color: var(--green); color: var(--green); }
+
+  /* ── TEST RESULTS ─────────────────────────────────────────────── */
+  .test-results {
+    margin: 10px 14px 14px;
+    border-radius: 4px;
+    overflow: hidden;
+    border: 1px solid var(--border2);
+    font-size: 11px;
+  }
+  .test-results-header {
+    display: flex; align-items: center; gap: 8px;
+    padding: 7px 12px;
+    font-size: 10px; letter-spacing: .1em; font-weight: 700;
+  }
+  .test-results.pass .test-results-header { background: rgba(74,222,128,.1); color: var(--green); border-bottom: 1px solid rgba(74,222,128,.2); }
+  .test-results.fail .test-results-header { background: rgba(248,113,113,.1); color: #f87171;  border-bottom: 1px solid rgba(248,113,113,.2); }
+  .test-results.running .test-results-header { background: rgba(0,229,255,.07); color: var(--cyan); border-bottom: 1px solid rgba(0,229,255,.15); }
+  .test-results pre {
+    margin: 0; padding: 10px 12px;
+    background: var(--bg);
+    color: var(--text); font-size: 11px; line-height: 1.6;
+    white-space: pre-wrap; word-break: break-all;
+    max-height: 260px; overflow-y: auto;
+  }
+
+  .streaming-cursor {
+    display: inline-block;
+    width: 7px; height: 13px;
+    background: var(--cyan);
+    opacity: .9;
+    animation: blink .7s step-end infinite;
+    vertical-align: text-bottom; margin-left: 1px;
+  }
+  @keyframes blink { 0%,100%{opacity:.9} 50%{opacity:0} }
+
+  /* ── DIFF DECORATIONS (Monaco line highlights) ─────────────────── */
+  .agent-syntax-line      { background: rgba(56,  189, 248, 0.13) !important; border-left: 2px solid #38bdf8; }
+  .agent-performance-line { background: rgba(251, 146,  60, 0.13) !important; border-left: 2px solid #fb923c; }
+  .agent-docstring-line   { background: rgba(244, 114, 182, 0.13) !important; border-left: 2px solid #f472b6; }
+
+  /* ── ORCHESTRATOR PLAN CARD ────────────────────────────────────── */
+  .plan-grid { display: flex; flex-direction: column; gap: 10px; }
+  .plan-row { display: flex; flex-direction: column; gap: 3px; }
+  .plan-label {
+    font-size: 9px; letter-spacing: .12em; font-weight: 700;
+    color: var(--violet); text-transform: uppercase;
+  }
+  .plan-body { font-size: 12px; line-height: 1.65; color: var(--text); }
+  .plan-analysis {
+    padding: 10px 12px;
+    background: rgba(167,139,250,.07);
+    border: 1px solid rgba(167,139,250,.2);
+    border-radius: 3px;
+    font-size: 12px; line-height: 1.65; color: var(--text);
+    margin-bottom: 4px;
+  }
+  .plan-streaming { font-size: 10.5px; color: var(--muted); white-space: pre-wrap; word-break: break-all; }
+
+  /* ── PIPELINE CONNECTOR ────────────────────────────────────────── */
+  .connector {
+    display: flex; align-items: center; justify-content: center;
+    height: 16px; color: var(--dim); font-size: 10px;
+    letter-spacing: .05em; flex-shrink: 0;
+  }
+  .connector::before, .connector::after {
+    content: ''; flex: 1; height: 1px;
+    background: var(--border);
+    max-width: 24px;
+  }
+  .connector span { padding: 0 8px; }
+
+  /* ── BOTTOM STAT BAR ───────────────────────────────────────────── */
+  #stat-bar {
+    padding: 8px 16px;
+    border-top: 1px solid var(--border);
+    background: var(--bg2);
+    display: flex; gap: 24px;
+    font-size: 10px; color: var(--muted); letter-spacing: .06em;
+  }
+  #stat-bar span { color: var(--text); }
+
+  /* ── WELCOME STATE ─────────────────────────────────────────────── */
+  #welcome {
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    height: 100%; gap: 12px;
+    color: var(--dim); font-size: 11px; letter-spacing: .06em;
+    text-align: center;
+  }
+  #welcome .big { font-family: 'Orbitron', monospace; font-size: 28px; color: var(--border2); letter-spacing: .2em; }
+  #welcome p { max-width: 260px; line-height: 1.7; }
+
+  /* ── ERROR TOAST ───────────────────────────────────────────────── */
+  #toast {
+    position: fixed; bottom: 20px; right: 20px; z-index: 100;
+    background: #1a0a0a; border: 1px solid #f87171;
+    color: #f87171; padding: 10px 16px; border-radius: 4px;
+    font-size: 12px; max-width: 320px;
+    transform: translateY(60px); opacity: 0;
+    transition: all .3s;
+    pointer-events: none;
+  }
+  #toast.show { transform: translateY(0); opacity: 1; }
+</style>
+</head>
+<body>
+
+<!-- TOP BAR -->
+<div id="topbar">
+  <div class="logo">REFRACT <span>// MULTI-AGENT CODE INTELLIGENCE</span></div>
+  <div id="status-bar">
+    <div id="provider-badge">ANTHROPIC</div>
+    <div id="global-status">
+      <div class="status-dot idle" id="status-dot"></div>
+      <span id="status-text">IDLE</span>
+    </div>
+  </div>
+</div>
+
+<!-- MAIN -->
+<div id="main">
+
+  <!-- LEFT: CODE INPUT -->
+  <div id="left">
+    <div class="panel-header">
+      <span class="title">INPUT</span>
+      <span id="line-count">0 lines</span>
+    </div>
+    <div id="editor-wrap"></div>
+    <div id="controls">
+      <select id="lang-select">
+        <option value="python">Python</option>
+        <option value="javascript">JavaScript</option>
+        <option value="typescript">TypeScript</option>
+        <option value="java">Java</option>
+        <option value="cpp">C++</option>
+        <option value="go">Go</option>
+        <option value="rust">Rust</option>
+      </select>
+      <button id="clear-btn">CLEAR</button>
+      <button id="run-btn">▶ RUN PIPELINE</button>
+    </div>
+  </div>
+
+  <!-- RIGHT: AGENT PIPELINE -->
+  <div id="right">
+    <div class="panel-header">
+      <span class="title">PIPELINE</span>
+      <span id="agent-progress">0 / 5 agents</span>
+    </div>
+
+    <div id="pipeline">
+      <!-- Welcome state, replaced on first run -->
+      <div id="welcome">
+        <div class="big">⬡</div>
+        <p>Paste your code, select a language, and hit RUN PIPELINE to dispatch all agents.</p>
+      </div>
+    </div>
+
+    <div id="test-toolbar" style="display:none">
+      <div id="test-toolbar-actions">
+        <button class="test-action-btn" id="copy-tests-btn" onclick="copyTests()">COPY TESTS</button>
+        <button class="test-action-btn" onclick="downloadTests()">DOWNLOAD</button>
+      </div>
+      <div id="test-results-block" class="test-results" style="display:none"></div>
+    </div>
+
+    <div id="stat-bar">
+      <div>AGENTS <span id="stat-agents">—</span></div>
+      <div>TOKENS <span id="stat-tokens">—</span></div>
+      <div>ELAPSED <span id="stat-time">—</span></div>
+    </div>
+  </div>
+</div>
+
+<div id="toast"></div>
+
+<script>
+// ── Monaco setup ─────────────────────────────────────────────────────────────
+let editor;
+const SAMPLE_CODE = `def find_duplicates(arr):
+    duplicates = []
+    for i in range(len(arr)):
+        for j in range(i + 1, len(arr)):
+            if arr[i] == arr[j]:
+                if arr[i] not in duplicates:
+                    duplicates.append(arr[i])
+    return duplicates
+
+def calculate_stats(numbers):
+    total = 0
+    for n in numbers: total += n
+    avg = total / len(numbers)
+    minimum = numbers[0]
+    maximum = numbers[0]
+    for n in numbers:
+        if n < minimum: minimum = n
+        if n > maximum: maximum = n
+    return {"sum": total, "avg": avg, "min": minimum, "max": maximum}`;
+
+require.config({ paths: { 'vs': 'https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.44.0/min/vs' } });
+require(['vs/editor/editor.main'], function () {
+  monaco.editor.defineTheme('refract', {
+    base: 'vs-dark',
+    inherit: true,
+    rules: [
+      { token: 'comment',    foreground: '3a5070', fontStyle: 'italic' },
+      { token: 'keyword',    foreground: 'a78bfa' },
+      { token: 'string',     foreground: '4ade80' },
+      { token: 'number',     foreground: 'fb923c' },
+      { token: 'type',       foreground: '00e5ff' },
+      { token: 'function',   foreground: '38bdf8' },
+      { token: 'variable',   foreground: 'c4d0e3' },
+    ],
+    colors: {
+      'editor.background':           '#07090f',
+      'editor.foreground':           '#c4d0e3',
+      'editor.lineHighlightBackground': '#0c1018',
+      'editorLineNumber.foreground': '#253044',
+      'editorLineNumber.activeForeground': '#4a6280',
+      'editor.selectionBackground':  '#1c2f4a',
+      'editorCursor.foreground':     '#00e5ff',
+      'editor.inactiveSelectionBackground': '#162030',
+      'editorGutter.background':     '#07090f',
+    }
+  });
+
+  editor = monaco.editor.create(document.getElementById('editor-wrap'), {
+    value: SAMPLE_CODE,
+    language: 'python',
+    theme: 'refract',
+    fontSize: 12.5,
+    lineHeight: 20,
+    fontFamily: "'JetBrains Mono', monospace",
+    fontLigatures: true,
+    minimap: { enabled: false },
+    scrollbar: { verticalScrollbarSize: 4, horizontalScrollbarSize: 4 },
+    padding: { top: 12, bottom: 12 },
+    overviewRulerLanes: 0,
+    renderLineHighlight: 'line',
+    wordWrap: 'on',
+    automaticLayout: true,
+  });
+
+  editor.onDidChangeModelContent(() => {
+    const lines = editor.getModel().getLineCount();
+    document.getElementById('line-count').textContent = `${lines} line${lines !== 1 ? 's' : ''}`;
+  });
+  // trigger initial count
+  editor.getModel().onDidChangeContent();
+  document.getElementById('line-count').textContent = `${editor.getModel().getLineCount()} lines`;
+});
+
+// ── Language select ───────────────────────────────────────────────────────────
+document.getElementById('lang-select').addEventListener('change', e => {
+  if (editor) monaco.editor.setModelLanguage(editor.getModel(), e.target.value);
+});
+
+// ── Agent config (mirrors backend) ───────────────────────────────────────────
+const AGENTS = {
+  orchestrator: { name: 'Lead Programmer',       color: '#a78bfa' },
+  syntax:       { name: 'Syntax Fixer',           color: '#38bdf8' },
+  performance:  { name: 'Performance Optimizer',  color: '#fb923c' },
+  test:         { name: 'Test Generator',         color: '#4ade80' },
+  docstring:    { name: 'Docstring Writer',       color: '#f472b6' },
+};
+const PIPELINE_ORDER = ['orchestrator', 'syntax', 'performance', 'test', 'docstring'];
+
+// ── State ─────────────────────────────────────────────────────────────────────
+let agentRawText  = {};   // id → raw accumulated text
+let agentCards    = {};   // id → card DOM element
+let completedCount = 0;
+let tokenCount     = 0;
+let startTime      = null;
+let timerInterval  = null;
+
+// diff / editor state
+let currentEditorCode    = '';   // code currently shown in editor
+let diffHistory          = [];   // [{agentId, lines[]}] — accumulated per-agent diffs
+let decorationIds        = [];   // live Monaco decoration IDs
+
+// ── Build pipeline UI ─────────────────────────────────────────────────────────
+function buildPipeline() {
+  const container = document.getElementById('pipeline');
+  container.innerHTML = '';
+  agentRawText  = {};
+  agentCards    = {};
+  completedCount = 0;
+  tokenCount     = 0;
+  diffHistory    = [];
+  decorationIds  = editor ? editor.deltaDecorations(decorationIds, []) : [];
+  document.getElementById('test-toolbar').style.display = 'none';
+  document.getElementById('test-results-block').style.display = 'none';
+
+  PIPELINE_ORDER.forEach((id, idx) => {
+    const ag = AGENTS[id];
+
+    if (idx > 0) {
+      const conn = document.createElement('div');
+      conn.className = 'connector';
+      conn.innerHTML = `<span>↓</span>`;
+      container.appendChild(conn);
+    }
+
+    const card = document.createElement('div');
+    card.className = 'agent-card';
+    card.id = `card-${id}`;
+    card.style.setProperty('--agent-color', ag.color);
+    card.innerHTML = `
+      <div class="agent-header" onclick="toggleCard('${id}')">
+        <div class="agent-indicator"></div>
+        <div class="agent-name">${ag.name.toUpperCase()}</div>
+        <div class="agent-badge" id="badge-${id}">IDLE</div>
+        <div class="agent-toggle">▼</div>
+      </div>
+      <div class="agent-output" id="output-${id}">
+        <div class="agent-output-inner" id="inner-${id}"></div>
+      </div>
+    `;
+    container.appendChild(card);
+    agentCards[id] = card;
+    agentRawText[id] = '';
+  });
+}
+
+function toggleCard(id) {
+  const card = agentCards[id];
+  if (!card) return;
+  card.classList.toggle('open');
+}
+
+function openCard(id) {
+  agentCards[id]?.classList.add('open');
+}
+
+// ── Diff helpers ──────────────────────────────────────────────────────────────
+
+function extractCodeBlock(text) {
+  // grab the last fenced code block (agents often show bullets then the full code)
+  const matches = [...text.matchAll(/```(?:\w+)?\n([\s\S]*?)```/g)];
+  return matches.length ? matches[matches.length - 1][1].trimEnd() : null;
+}
+
+function diffChangedLines(oldCode, newCode) {
+  // Simple line diff: returns 1-indexed line numbers in newCode that differ
+  // from oldCode at the same position (handles in-place edits + added lines)
+  const oldLines = oldCode.split('\n');
+  const newLines = newCode.split('\n');
+  const changed = [];
+  for (let i = 0; i < newLines.length; i++) {
+    if (i >= oldLines.length || oldLines[i] !== newLines[i]) {
+      changed.push(i + 1);
+    }
+  }
+  return changed;
+}
+
+function reapplyDecorations() {
+  if (!editor) return;
+  const allDecos = diffHistory.flatMap(({ agentId, lines }) =>
+    lines.map(line => ({
+      range: new monaco.Range(line, 1, line, 1),
+      options: { isWholeLine: true, className: `agent-${agentId}-line` },
+    }))
+  );
+  decorationIds = editor.deltaDecorations(decorationIds, allDecos);
+}
+
+function applyAgentCode(agentId, newCode) {
+  if (!editor) return;
+  const lines = diffChangedLines(currentEditorCode, newCode);
+  currentEditorCode = newCode;
+  if (lines.length) diffHistory.push({ agentId, lines });
+  // setValue clears decorations; reapply everything after
+  editor.setValue(newCode);
+  reapplyDecorations();
+}
+
+// ── Orchestrator plan renderer ────────────────────────────────────────────────
+
+function renderPlan(plan) {
+  const esc = s => String(s).replace(/</g, '&lt;');
+  const rows = [
+    { key: 'syntax_instructions',      label: 'Syntax' },
+    { key: 'performance_instructions', label: 'Performance' },
+    { key: 'test_instructions',        label: 'Tests' },
+    { key: 'docstring_instructions',   label: 'Docs' },
+  ].filter(r => plan[r.key]);
+
+  return `
+    ${plan.analysis ? `<div class="plan-analysis">${esc(plan.analysis)}</div>` : ''}
+    <div class="plan-grid">
+      ${rows.map(r => `
+        <div class="plan-row">
+          <div class="plan-label">${r.label}</div>
+          <div class="plan-body">${esc(plan[r.key])}</div>
+        </div>`).join('')}
+    </div>`;
+}
+
+function renderAgent(id, withCursor) {
+  const inner = document.getElementById(`inner-${id}`);
+  if (!inner) return;
+
+  let html;
+  const raw = agentRawText[id];
+
+  if (id === 'orchestrator') {
+    if (withCursor) {
+      // Still streaming — show raw JSON as plain text
+      html = `<div class="plan-streaming">${raw.replace(/</g, '&lt;')}</div>`;
+    } else {
+      // Complete — try to parse and render as plan card
+      try {
+        const jsonStr = raw.trim().startsWith('{') ? raw.trim()
+          : (raw.match(/\{[\s\S]*\}/) || [''])[0];
+        html = renderPlan(JSON.parse(jsonStr));
+      } catch (e) {
+        try { html = marked.parse(raw); } catch { html = `<pre>${raw.replace(/</g, '&lt;')}</pre>`; }
+      }
+    }
+  } else {
+    try {
+      html = marked.parse(raw);
+    } catch (e) {
+      html = `<pre>${raw.replace(/</g, '&lt;')}</pre>`;
+    }
+  }
+
+  inner.innerHTML = withCursor ? html + '<span class="streaming-cursor"></span>' : html;
+}
+
+// ── SSE event handlers ────────────────────────────────────────────────────────
+function onAgentStart(id) {
+  const card = agentCards[id];
+  if (!card) return;
+  card.classList.remove('idle', 'complete');
+  card.classList.add('processing');
+  document.getElementById(`badge-${id}`).textContent = 'PROCESSING';
+  openCard(id);
+  document.getElementById(`inner-${id}`).innerHTML = '<span class="streaming-cursor"></span>';
+}
+
+function renderAgent(id, withCursor) {
+  const inner = document.getElementById(`inner-${id}`);
+  if (!inner) return;
+  let html;
+  try {
+    html = marked.parse(agentRawText[id]);
+  } catch (e) {
+    // marked failed — show plain text so output is never lost
+    html = '<pre>' + agentRawText[id].replace(/</g, '&lt;') + '</pre>';
+  }
+  inner.innerHTML = withCursor ? html + '<span class="streaming-cursor"></span>' : html;
+}
+
+function onAgentToken(id, token) {
+  agentRawText[id] += token;
+  tokenCount += token.length;
+  document.getElementById('stat-tokens').textContent = tokenCount.toLocaleString() + ' chars';
+
+  renderAgent(id, true);
+
+  const pipeline = document.getElementById('pipeline');
+  if (pipeline) pipeline.scrollTop = pipeline.scrollHeight;
+}
+
+function onAgentDone(id) {
+  const card = agentCards[id];
+  if (!card) return;
+  card.classList.remove('processing');
+  card.classList.add('complete');
+  document.getElementById(`badge-${id}`).textContent = 'COMPLETE';
+
+  renderAgent(id, false);
+
+  // Code-modifying agents update the left editor with a diff highlight.
+  // 'test' is excluded — it produces a new test file, not edits to the original.
+  if (id !== 'orchestrator' && id !== 'test') {
+    const code = extractCodeBlock(agentRawText[id]);
+    if (code) applyAgentCode(id, code);
+  }
+
+  if (id === 'test') {
+    document.getElementById('test-toolbar').style.display = 'flex';
+  }
+  const pipeline = document.getElementById('pipeline');
+  if (pipeline) pipeline.scrollTop = pipeline.scrollHeight;
+
+  completedCount++;
+  document.getElementById('agent-progress').textContent = `${completedCount} / 5 agents`;
+  document.getElementById('stat-agents').textContent = `${completedCount} / 5`;
+}
+
+function onPipelineComplete() {
+  setStatus('done', 'COMPLETE');
+  stopTimer();
+  document.getElementById('run-btn').disabled = false;
+  document.getElementById('run-btn').textContent = '▶ RUN PIPELINE';
+}
+
+// ── Status helpers ────────────────────────────────────────────────────────────
+function setStatus(state, label) {
+  const dot  = document.getElementById('status-dot');
+  const text = document.getElementById('status-text');
+  dot.className  = `status-dot ${state}`;
+  text.textContent = label;
+}
+
+function startTimer() {
+  startTime = Date.now();
+  timerInterval = setInterval(() => {
+    const s = ((Date.now() - startTime) / 1000).toFixed(1);
+    document.getElementById('stat-time').textContent = `${s}s`;
+  }, 100);
+}
+
+function stopTimer() {
+  clearInterval(timerInterval);
+}
+
+// ── Toast ─────────────────────────────────────────────────────────────────────
+function showToast(msg) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  setTimeout(() => t.classList.remove('show'), 4000);
+}
+
+// ── Main: fetch health, update provider badge ─────────────────────────────────
+async function fetchHealth() {
+  try {
+    const r = await fetch('/api/health');
+    const d = await r.json();
+    const badge = document.getElementById('provider-badge');
+    badge.textContent = (d.provider || 'UNKNOWN').toUpperCase();
+    if (d.provider === 'openai') badge.style.color = '#4ade80';
+    if (d.provider === 'lava')   badge.style.color = '#fb923c';
+  } catch { /* backend not ready yet */ }
+}
+fetchHealth();
+
+// ── Parse SSE stream manually (POST → ReadableStream) ────────────────────────
+async function streamPipeline(code, language) {
+  const response = await fetch('/api/process', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ code, language }),
+  });
+
+  if (!response.ok) {
+    const err = await response.text();
+    throw new Error(`HTTP ${response.status}: ${err}`);
+  }
+
+  const reader  = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer    = '';
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+
+    buffer += decoder.decode(value, { stream: true });
+
+    // SSE messages are separated by \n\n
+    const chunks = buffer.split('\n\n');
+    buffer = chunks.pop(); // save incomplete trailing chunk
+
+    for (const chunk of chunks) {
+      if (!chunk.trim()) continue;
+      let eventType = 'message';
+      let dataStr   = '';
+      for (const line of chunk.split('\n')) {
+        if (line.startsWith('event: ')) eventType = line.slice(7).trim();
+        if (line.startsWith('data: '))  dataStr   = line.slice(6).trim();
+      }
+      if (!dataStr) continue;
+
+      try {
+        const data = JSON.parse(dataStr);
+        switch (eventType) {
+          case 'agent_start':     onAgentStart(data.agent); break;
+          case 'agent_token':     onAgentToken(data.agent, data.token); break;
+          case 'agent_done':      onAgentDone(data.agent); break;
+          case 'test_running':    onTestRunning(); break;
+          case 'test_results':    onTestResults(data); break;
+          case 'pipeline_complete': onPipelineComplete(); break;
+        }
+      } catch (e) { console.warn('SSE parse error', e); }
+    }
+  }
+}
+
+// ── Test copy / download ──────────────────────────────────────────────────────
+function _extractTestCode() {
+  const matches = [...agentRawText['test'].matchAll(/```(?:\w+)?\n([\s\S]*?)```/g)];
+  return matches.length ? matches[matches.length - 1][1].trimEnd() : agentRawText['test'];
+}
+
+function copyTests() {
+  const code = _extractTestCode();
+  navigator.clipboard.writeText(code).then(() => {
+    const btn = document.getElementById('copy-tests-btn');
+    btn.textContent = 'COPIED!';
+    setTimeout(() => { btn.textContent = 'COPY'; }, 1500);
+  });
+}
+
+function downloadTests() {
+  const code = _extractTestCode();
+  const blob = new Blob([code], { type: 'text/plain' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'test_solution.py';
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
+// ── Test result handlers ──────────────────────────────────────────────────────
+function onTestRunning() {
+  const el = document.getElementById('test-results-block');
+  el.className = 'test-results running';
+  el.style.display = 'block';
+  el.innerHTML = `<div class="test-results-header">◉ RUNNING TESTS...</div>`;
+}
+
+function onTestResults(data) {
+  const el = document.getElementById('test-results-block');
+
+  let passed = 0, failed = 0, total = 0;
+  const m = data.output.match(/(\d+) failed(?:, (\d+) passed)?|(\d+) passed/);
+  if (m) {
+    if (m[3]) { passed = +m[3]; }          // only "N passed"
+    else { failed = +m[1]; passed = +(m[2] || 0); }
+  }
+  total = passed + failed;
+  const countLabel = total > 0 ? `${passed} / ${total} PASSED` : (data.passed ? '✓ ALL PASSED' : '✗ FAILED');
+  const state = data.passed ? 'pass' : 'fail';
+
+  el.className = `test-results ${state}`;
+  el.style.display = 'block';
+  el.innerHTML = `
+    <div class="test-results-header">${countLabel}</div>
+    <pre>${data.output.replace(/</g, '&lt;')}</pre>`;
+}
+
+// ── Run button ────────────────────────────────────────────────────────────────
+document.getElementById('run-btn').addEventListener('click', async () => {
+  const code = editor ? editor.getValue().trim() : '';
+  if (!code) { showToast('Paste some code first.'); return; }
+
+  const language = document.getElementById('lang-select').value;
+
+  // Reset UI
+  currentEditorCode = code;
+  buildPipeline();
+  document.getElementById('stat-agents').textContent = '0 / 5';
+  document.getElementById('stat-tokens').textContent = '0 chars';
+  document.getElementById('stat-time').textContent   = '0.0s';
+  document.getElementById('agent-progress').textContent = '0 / 5 agents';
+
+  const btn = document.getElementById('run-btn');
+  btn.disabled = true;
+  btn.textContent = '◉ RUNNING...';
+
+  setStatus('running', 'RUNNING');
+  startTimer();
+
+  try {
+    await streamPipeline(code, language);
+  } catch (err) {
+    setStatus('error', 'ERROR');
+    stopTimer();
+    btn.disabled = false;
+    btn.textContent = '▶ RUN PIPELINE';
+    showToast(`Error: ${err.message}`);
+  }
+});
+
+// ── Clear button ──────────────────────────────────────────────────────────────
+document.getElementById('clear-btn').addEventListener('click', () => {
+  if (editor) editor.setValue('');
+});
+</script>
+</body>
+</html>
